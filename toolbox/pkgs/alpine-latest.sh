@@ -6,6 +6,7 @@ ld -v || true
 ldd --version || true
 
 # Install packages via the system package-manager (apk)
+
 apk add \
  bash \
  bsd-compat-headers \
