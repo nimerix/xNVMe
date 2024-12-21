@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <libxnvme.h>
 
+#define MAX_DEVS 100
 #define MAX_LISTINGS 1024
 #define MAX_HANDLES 1024
 
@@ -43,7 +44,7 @@ test_enum(struct xnvme_cli *cli)
 	xnvme_cli_pinf("Will enumerate %ld times", nlistings);
 
 	for (uint64_t i = 0; i < nlistings; ++i) {
-		err = xnvme_cli_enumeration_alloc(&listing[i], 100);
+		err = xnvme_cli_enumeration_alloc(&listing[i], MAX_DEVS);
 		if (err) {
 			XNVME_DEBUG("FAILED: xnvme_cli_enumeration_alloc()");
 			return err;
@@ -83,7 +84,7 @@ test_enum_open(struct xnvme_cli *cli)
 		return err;
 	}
 
-	err = xnvme_cli_enumeration_alloc(&listing, 100);
+	err = xnvme_cli_enumeration_alloc(&listing, MAX_DEVS);
 	if (err) {
 		XNVME_DEBUG("FAILED: xnvme_cli_enumeration_alloc()");
 		return err;
@@ -133,6 +134,81 @@ test_enum_open(struct xnvme_cli *cli)
 	}
 
 	xnvme_cli_pinf("LGTM: xnvme_enumerate() + xnvme_dev_open() * count");
+	return 0;
+}
+
+int
+enumerate_keep_open_cb(struct xnvme_dev *dev, void *cb_args)
+{
+	struct xnvme_dev **devs = cb_args;
+
+	for (int64_t i = 0; i < MAX_DEVS; ++i) {
+		if (devs[i] == NULL) {
+			devs[i] = dev;
+			break;
+		}
+	}
+
+	return XNVME_ENUMERATE_DEV_KEEP_OPEN;
+}
+
+static int
+test_enum_keep_open(struct xnvme_cli *cli)
+{
+	struct xnvme_dev *devs[MAX_DEVS];
+	struct xnvme_opts enum_opts = {0};
+	struct xnvme_cmd_ctx ctx = {0};
+	struct xnvme_spec_idfy *idfy_ctrlr = NULL;
+	int err;
+	int found = 0;
+
+	for (int64_t i = 0; i < MAX_DEVS; ++i) {
+		devs[i] = NULL;
+	}
+
+	err = xnvme_cli_to_opts(cli, &enum_opts);
+	if (err) {
+		xnvme_cli_perr("xnvme_cli_to_opts()", err);
+		return err;
+	}
+
+	err = xnvme_enumerate(cli->args.sys_uri, &enum_opts, *enumerate_keep_open_cb, devs);
+	if (err) {
+		xnvme_cli_perr("xnvme_enumerate()", err);
+		return err;
+	}
+
+	for (int64_t i = 0; i < MAX_DEVS; ++i) {
+		if (devs[i] == NULL) {
+			continue;
+		}
+		++found;
+		if (cli->args.verbose) {
+			xnvme_dev_pr(devs[i], XNVME_PR_DEF);
+		}
+
+		// Send a identify controller command to make sure the device really is open.
+		idfy_ctrlr = xnvme_buf_alloc(devs[i], sizeof(*idfy_ctrlr));
+		if (!idfy_ctrlr) {
+			XNVME_DEBUG("FAILED: xnvme_buf_alloc()");
+			return -errno;
+		}
+		ctx = xnvme_cmd_ctx_from_dev(devs[i]);
+		err = xnvme_adm_idfy_ctrlr(&ctx, idfy_ctrlr);
+		if (err) {
+			XNVME_DEBUG("FAILED: xnvme_adm_idfy_ctrlr()");
+			return err;
+		}
+		xnvme_buf_free(devs[i], idfy_ctrlr);
+
+		xnvme_dev_close(devs[i]);
+	}
+	if (!found) {
+		xnvme_cli_pinf("No devices left open by enumeration.");
+		return ENOENT;
+	}
+
+	xnvme_cli_pinf("LGTM: xnvme_enumerate() + keep_open");
 	return 0;
 }
 
@@ -216,6 +292,19 @@ static struct xnvme_cli_sub g_subs[] = {
 			{XNVME_CLI_OPT_NON_POSA_TITLE, XNVME_CLI_SKIP},
 			{XNVME_CLI_OPT_SYS_URI, XNVME_CLI_LOPT},
 			{XNVME_CLI_OPT_COUNT, XNVME_CLI_LOPT},
+			{XNVME_CLI_OPT_VERBOSE, XNVME_CLI_LFLG},
+			XNVME_CLI_CORE_OPTS,
+		},
+	},
+	{
+		"keep_open",
+		"Call xnvme_enumerate() once, keep devices open",
+		"Call xnvme_enumerate() once, keep devices open\n"
+		"Dump info on each opened device with --verbose",
+		test_enum_keep_open,
+		{
+			{XNVME_CLI_OPT_NON_POSA_TITLE, XNVME_CLI_SKIP},
+			{XNVME_CLI_OPT_SYS_URI, XNVME_CLI_LOPT},
 			{XNVME_CLI_OPT_VERBOSE, XNVME_CLI_LFLG},
 			XNVME_CLI_CORE_OPTS,
 		},
