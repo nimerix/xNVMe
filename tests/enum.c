@@ -57,6 +57,11 @@ test_enum(struct xnvme_cli *cli)
 			return err;
 		}
 
+		if (listing[i]->nentries < 1) {
+			xnvme_cli_pinf("The enumeration %ld did not contain any entries", i);
+			return ENOENT;
+		}
+
 		if (i && (listing[i]->nentries != listing[i - 1]->nentries)) {
 			xnvme_cli_pinf("The enumeration %ld did not match the prev", i);
 
@@ -99,6 +104,11 @@ test_enum_open(struct xnvme_cli *cli)
 
 	if (cli->args.count) {
 		count = cli->args.count > MAX_HANDLES ? MAX_HANDLES : cli->args.count;
+	}
+
+	if (listing->nentries < 1) {
+		xnvme_cli_pinf("The enumeration did not contain any entries");
+		return ENOENT;
 	}
 
 	for (int64_t i = 0; i < listing->nentries; ++i) {
